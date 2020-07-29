@@ -24,6 +24,7 @@ class WatchdogCommands extends DrushCommands
      * @option severity Restrict to messages of a given severity level.
      * @option type Restrict to messages of a given type.
      * @option extended Return extended information about each message.
+     * @option tail Keep the watch open and show new incomming logged messages.
      * @usage  drush watchdog:show
      *   Show a listing of most recent 10 messages.
      * @usage drush watchdog:show "cron run successful"
@@ -51,9 +52,10 @@ class WatchdogCommands extends DrushCommands
      * @filter-default-field message
      * @return \Consolidation\OutputFormatters\StructuredData\RowsOfFields
      */
-    public function show($substring = '', $options = ['format' => 'table', 'count' => 10, 'severity' => self::REQ, 'type' => self::REQ, 'extended' => false])
+    public function show($substring = '', $options = ['format' => 'table', 'count' => 10, 'severity' => self::REQ, 'type' => self::REQ, 'extended' => false, 'tail' => FALSE])
     {
         $where = $this->where($options['type'], $options['severity'], $substring);
+        $tail = $options['tail'];
         $query = Database::getConnection()->select('watchdog', 'w')
             ->range(0, $options['count'])
             ->fields('w')
@@ -66,11 +68,31 @@ class WatchdogCommands extends DrushCommands
             $row = $this->formatResult($result, $options['extended']);
             $table[$row->wid] = (array)$row;
         }
-        if (empty($table)) {
+        if (empty($table) && !$tail) {
             $this->logger()->notice(dt('No log messages available.'));
-        } else {
-            return new RowsOfFields($table);
-        }
+         } else {
+             if ($tail) {
+                 // Query for new watchdog messages every 2 seconds.
+                 while (true) {
+                     $rsc = Database::getConnection()->select('watchdog', 'w')
+                         ->fields('w')
+                         ->condition('wid', $last_wid, '>')
+                         ->orderBy('wid', 'ASC')
+                         ->execute();
+                     while ($result = $rsc->fetchObject()) {
+                         $row = $this->formatResult($result, $options['extended']);
+                         print "\n  " . $row->wid . "\t";
+                         print $row->date . "\t";
+                         print $row->type . "\t";
+                         print $row->severity . "\t";
+                         print $row->message;
+                     }
+                     $last_wid = $row->wid;
+                     sleep(2);
+                 }
+             }
+             return new RowsOfFields($table);
+         }
     }
 
     /**
